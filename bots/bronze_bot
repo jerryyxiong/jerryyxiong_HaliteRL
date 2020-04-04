@@ -1,0 +1,105 @@
+from collections import defaultdict
+import numpy as np
+from engine import Player, Game
+from entity import Position, MoveCommand, SpawnShipCommand, ConstructDropoffCommand
+from viewer import Replayer
+
+
+class BronzeBot(Player):
+    def __init__(self):
+        self.id = None
+        self.shipyard = None
+        self.halite = 0
+        self.returning = defaultdict(bool)  # ship id: bool
+
+    def start(self, id_, map_width, map_height, game):
+        self.id = id_
+        for y in range(map_width):
+            for x in range(map_height):
+                if game.cells[y][x][1] != -1 and game.constructs[game.cells[y][x][1]].owner_id == self.id:
+                    self.shipyard = game.constructs[game.cells[y][x][1]]
+
+    def step(self, game):
+        commands = {}
+        next_pos = {}  # ship id: next position
+        next_ships = []  # next_ships[y][x] = list of ships that will end want to move to y x
+        for y in range(game.height):
+            next_ships.append([])
+            for x in range(game.width):
+                next_ships[y].append([])
+
+        self.halite = game.halite_stores[self.id]
+        for ship in game.ships.values():
+            if ship.owner_id == self.id:
+                # new_move = MoveCommand(self.id, ship.id, random.choice(['N', 'S', 'E', 'W', 'O']))
+                # commands.append(new_move)
+                if self.halite >= 4000 and game.cells[ship.y][ship.x][1] == -1:
+                    commands[ship.id] = ConstructDropoffCommand(self.id, ship.id)
+                    self.halite -= 4000
+                    continue
+                if ship.halite > 800:
+                    self.returning[ship.id] = True
+                elif ship.x == self.shipyard.x and ship.y == self.shipyard.y:
+                    self.returning[ship.id] = False
+                if ship.halite < game.cells[ship.y][ship.x][0] // 10:
+                    next_pos[ship.id] = Position(ship.x, ship.y)
+                else:
+                    if self.returning[ship.id]:
+                        target = Position(self.shipyard.x, self.shipyard.y)
+                    else:
+                        target = Position(ship.x, ship.y)
+                        for dx in range(-2, 3):
+                            for dy in range(-2, 3):
+                                if (0 <= ship.x + dx < game.width and 0 <= ship.y + dy < game.height and (game.cells[ship.y + dy][ship.x + dx][0]) / (abs(dx) + abs(dy) + 1) > game.cells[target.y][target.x][0] / (abs(target.x - ship.x) + abs(target.y - ship.y) + 1)):
+                                    target.x = ship.x + dx
+                                    target.y = ship.y + dy
+                    if target.x < ship.x:
+                        next_pos[ship.id] = Position(ship.x - 1, ship.y)
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
+                    elif target.x > ship.x:
+                        next_pos[ship.id] = Position(ship.x + 1, ship.y)
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
+                    elif target.y < ship.y:
+                        next_pos[ship.id] = Position(ship.x, ship.y - 1)
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
+                    elif target.y > ship.y:
+                        next_pos[ship.id] = Position(ship.x, ship.y + 1)
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'N')
+                    else:
+                        next_pos[ship.id] = Position(ship.x, ship.y)
+                next_ships[next_pos[ship.id].y][next_pos[ship.id].x].append(ship)
+
+        # print(next_pos)
+        # print(game.ships)
+        # print(next_ships)
+        q = [ship for ship in game.ships.values() if ship.owner_id == self.id and ship.id in next_pos and (next_pos[ship.id].x != ship.x or next_pos[ship.id].y != ship.y)]
+        while q:
+            ship = q.pop()
+            if len(next_ships[next_pos[ship.id].y][next_pos[ship.id].x]) > 1:
+                next_ships[next_pos[ship.id].y][next_pos[ship.id].x].remove(ship)
+                next_pos[ship.id].x = ship.x
+                next_pos[ship.id].y = ship.y
+                commands[ship.id] = MoveCommand(self.id, ship.id, 'O')
+                q.extend(next_ships[ship.y][ship.x])
+                next_ships[ship.y][ship.x].append(ship)
+
+        ret = list(commands.values())
+        if len(next_ships[self.shipyard.y][self.shipyard.x]) == 0 and self.halite >= 1000:
+            ret.append(SpawnShipCommand(self.id, None))
+        return ret
+
+
+if __name__ == '__main__':
+    bot1 = BronzeBot()
+    bot2 = BronzeBot()
+    players, cell_data, bank_data, owner_data = Game.create_game([bot1, bot2], return_replay=True)
+    cells = cell_data[0]
+    # for y in range(len(cells)):
+    #     for x in range(len(cells[0])):
+    #         if cells[y][x].halite != states[-1][y][x].halite:
+    #             print('WOO')
+    #         print(cells[y][x].halite, end=' ')
+    #     print()
+
+    my_replay = Replayer.from_data(players, cell_data, bank_data, owner_data)
+    my_replay.run()
