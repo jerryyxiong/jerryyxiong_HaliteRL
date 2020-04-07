@@ -5,24 +5,20 @@ import pyglet
 from pyglet.gl import *
 
 key = pyglet.window.key
-mouse = pyglet.window.mouse
-RAD2DEG = 57.29577951308232
-COLORS = (255, 0, 0), (0, 255, 0), (6, 152, 253), (255, 125, 0)
-# SHIPYARD_COLORS = (200, 0, 0), (0, 200, 0), (0, 125, 200), (200, 100, 0)
-# DROPOFF_COLORS = (150, 0, 0), (0, 150, 0), (0, 90, 150), (150, 75, 0)
-SHIPYARD_CR = 0.6  # CR: Color Ratio
-DROPOFF_CR = 0.8
+
+CELL_SIZE = 20
 SHIP_MARGIN = 5
 STORAGE_MARGIN = 7
-CELL_SIZE = 20
-CELL_MAX_BRIGHTNESS_HALITE = 1000
+COLORS = (255, 0, 0), (0, 255, 0), (6, 152, 253), (255, 125, 0)
+SHIPYARD_CR = 0.6  # CR: Color Ratio
+DROPOFF_CR = 0.8
 
 
 def _halite_brightness(halite: int):
     return min(int(sqrt(halite / 1024) * 255), 255)
 
 
-def _ship_vertices(x, y, direction, storage=False):  # direction: current pos + displacement = prev_pos
+def _ship_vertices(x, y, direction, storage=False):
     margin = STORAGE_MARGIN if storage else SHIP_MARGIN
     if direction == (0, 0):
         return (CELL_SIZE * x + margin, CELL_SIZE * y + margin,
@@ -78,6 +74,7 @@ class Replayer(pyglet.window.Window):
         self.foreground = pyglet.graphics.OrderedGroup(1)
 
         self.current_turn = 0
+        self.current_rendered = None
         self.max_turns = len(cell_data)
         self.selected_cell = None
         self.turn_label = pyglet.text.Label(text=f'Turn: {self.current_turn + 1}/{self.max_turns}', x=self.width - 270,
@@ -172,14 +169,14 @@ class Replayer(pyglet.window.Window):
             self.keys[key.LEFT] = False
 
     def on_mouse_press(self, x, y, button, modifiers):
-        if button == mouse.LEFT:
+        if button == pyglet.window.mouse.LEFT:
             self.selected_cell = x // CELL_SIZE, y // CELL_SIZE
             if self.selected_cell[0] >= len(self.cell_data[0][0]):
                 self.selected_cell = None
                 return
 
     def on_mouse_drag(self, x, y, dx, dy, button, modifiers):
-        if button == mouse.LEFT:
+        if button == pyglet.window.mouse.LEFT:
             self.selected_cell = x // CELL_SIZE, y // CELL_SIZE
             if self.selected_cell[0] >= len(self.cell_data[0][0]):
                 self.selected_cell = None
@@ -190,8 +187,10 @@ class Replayer(pyglet.window.Window):
             self.current_turn += 1
         elif self.keys[key.LEFT] and time_ns() - self.key_press_time[key.LEFT] >= 5e8 and self.current_turn > 0:
             self.current_turn -= 1
-        else:
+        elif self.current_rendered == self.current_turn:
             return
+
+        self.current_rendered = self.current_turn
 
         cells = self.cell_data[self.current_turn]
         if self.current_turn > 0:
@@ -207,24 +206,6 @@ class Replayer(pyglet.window.Window):
         # Draws the grid.
         for y in range(len(cells)):
             for x in range(len(cells[0])):
-                # if cells[y][x][1] == -1:
-                #     batch.add(4, pyglet.gl.GL_QUADS, None,
-                #               ('v2i',
-                #                (x * CELL_SIZE, y * CELL_SIZE, (x + 1) * CELL_SIZE, y * CELL_SIZE, (x + 1) * CELL_SIZE,
-                #                 (y + 1) * CELL_SIZE, x * CELL_SIZE, (y + 1) * CELL_SIZE)),
-                #               ('c3B', (min(int(sqrt(cells[y][x][0] / 1024) * 255), 255),) * 12))
-                # elif cells[y][x][1] < len(self.players):
-                #     batch.add(4, pyglet.gl.GL_QUADS, None,
-                #               ('v2i',
-                #                (x * CELL_SIZE, y * CELL_SIZE, (x + 1) * CELL_SIZE, y * CELL_SIZE, (x + 1) * CELL_SIZE,
-                #                 (y + 1) * CELL_SIZE, x * CELL_SIZE, (y + 1) * CELL_SIZE)),
-                #               ('c3B', SHIPYARD_COLORS[cells[y][x][1]] * 4))
-                # else:
-                #     batch.add(4, pyglet.gl.GL_QUADS, None,
-                #               ('v2i', (x * CELL_SIZE, y * CELL_SIZE, (x + 1) * CELL_SIZE, y * CELL_SIZE,
-                #                        (x + 1) * CELL_SIZE,
-                #                        (y + 1) * CELL_SIZE, x * CELL_SIZE, (y + 1) * CELL_SIZE)),
-                #               ('c3B', DROPOFF_COLORS[self.owner_data[cells[y][x][1]]] * 4))
                 if cells[y][x][1] != prev_cells[y][x][1]:  # Means that cell was turned into a dropoff
                     self.cell_quads[y][x].colors = tuple(
                         int(DROPOFF_CR * a) for a in COLORS[self.owner_data[cells[y][x][1]]]) * 4
@@ -249,10 +230,6 @@ class Replayer(pyglet.window.Window):
                                     self.storage_vertices[cells[y][x][2]].resize(len(new_ship_vertices) // 2)
                                 self.ship_vertices[cells[y][x][2]].vertices = new_ship_vertices
                                 self.storage_vertices[cells[y][x][2]].vertices = new_storage_vertices
-                                # print(len(list(
-                                #     COLORS[self.owner_data[cells[y][x][2]]][i % 3] * _halite_brightness(cells[y][x][3])
-                                #     for i in range(3 * len(new_ship_vertices) // 2)
-                                # )))
                                 self.storage_vertices[cells[y][x][2]].colors = tuple(
                                     round(COLORS[self.owner_data[cells[y][x][2]]][i % 3] / 255 * _halite_brightness(
                                         cells[y][x][3]))
@@ -265,24 +242,6 @@ class Replayer(pyglet.window.Window):
                                     next_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
                                 new_ship_vertices = _ship_vertices(x, y, delta)
                                 new_storage_vertices = _ship_vertices(x, y, delta, storage=True)
-                                # print(type(cells[y][x][2]))
-                                # print(self.owner_data)
-                                # print(self.owner_data[cells[y][x][2]])
-                                # print(COLORS[self.owner_data[cells[y][x][2]]])
-                                # print(COLORS[self.owner_data[cells[y][x][2]]] * 3)
-                                # if len(new_ship_vertices) == 6:
-                                #     self.ship_vertices[cells[y][x][2]] = self.batch.add(
-                                #         3, GL_TRIANGLES, self.foreground, ('v2i/stream', new_ship_vertices),
-                                #         ('c3B/static', COLORS[self.owner_data[cells[y][x][2]]] * 3)
-                                #     )
-                                #     self.storage_vertices[cells[y][x][2]] = self.batch.add(
-                                #         3, GL_TRIANGLES, self.foreground, ('v2i/stream', new_storage_vertices),
-                                #         ('c3B/stream', (0,) * 9)
-                                #     )
-                                # elif len(new_ship_vertices) == 8:
-                                # print(self.current_turn)
-                                # print(len(COLORS[self.owner_data[cells[y][x][2]]] * 4))
-                                # print(type(COLORS[self.owner_data[cells[y][x][2]]] * 4))
                                 self.ship_vertices[cells[y][x][2]] = self.batch.add(
                                     4, GL_QUADS, self.foreground, ('v2i/stream', new_ship_vertices),
                                     ('c3B/static', COLORS[self.owner_data[cells[y][x][2]]] * 4)
@@ -291,9 +250,6 @@ class Replayer(pyglet.window.Window):
                                     4, GL_QUADS, self.foreground, ('v2i/stream', new_storage_vertices),
                                     ('c3B/stream', (0,) * 12)
                                 )
-                                # else:
-                                #     raise ValueError('THIS SHOULD NEVER HAPPEN')
-                                # break
 
         delete = []
         for id_, vertices in self.ship_vertices.items():
@@ -329,21 +285,6 @@ class Replayer(pyglet.window.Window):
             self.selection_quad.vertices = (0,) * 8
             self.selection_cell_label.text = ''
             self.selection_ship_label.text = ''
-
-        # if self.selected_cell is not None:
-        #     pyglet.text.Label(
-        #         text=f'Cell ({self.selected_cell[0]}, {self.selected_cell[1]}) '
-        #              f'Halite: {cells[self.selected_cell[1]][self.selected_cell[0]][0]}',
-        #         x=self.width - 270,
-        #         y=50,
-        #         batch=self.batch)
-        #     if cells[self.selected_cell[1]][self.selected_cell[0]][2] != -1:
-        #         pyglet.text.Label(
-        #             text=f'Ship ID {cells[self.selected_cell[1]][self.selected_cell[0]][2]} '
-        #                  f'Halite: {cells[self.selected_cell[1]][self.selected_cell[0]][3]}',
-        #             x=self.width - 270,
-        #             y=25,
-        #             batch=self.batch)
 
     def render(self):
         self.clear()
