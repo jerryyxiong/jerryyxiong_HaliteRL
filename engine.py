@@ -2,7 +2,7 @@ import random
 from collections import defaultdict
 import math
 import numpy as np
-from entity import Ship, Shipyard, Dropoff, MoveCommand, SpawnShipCommand, ConstructDropoffCommand
+from entity import Position, Ship, Shipyard, Dropoff, MoveCommand, SpawnShipCommand, ConstructDropoffCommand
 
 
 class Player:
@@ -13,24 +13,61 @@ class Player:
         pass
 
 
+def _fade(t):
+    return 6 * t ** 5 - 15 * t ** 4 + 10 * t ** 3
+
+
+def _generate_perlin_noise_2d(shape, res):
+    delta = (res[0] / shape[0], res[1] / shape[1])
+    d = (shape[0] // res[0], shape[1] // res[1])
+    grid = np.mgrid[0:res[0]:delta[0], 0:res[1]:delta[1]].transpose(1, 2, 0) % 1
+    # Gradients
+    angles = 2 * np.pi * np.random.rand(res[0] + 1, res[1] + 1)
+    gradients = np.dstack((np.cos(angles), np.sin(angles)))
+    g00 = gradients[0:-1, 0:-1].repeat(d[0], 0).repeat(d[1], 1)
+    g10 = gradients[1:, 0:-1].repeat(d[0], 0).repeat(d[1], 1)
+    g01 = gradients[0:-1, 1:].repeat(d[0], 0).repeat(d[1], 1)
+    g11 = gradients[1:, 1:].repeat(d[0], 0).repeat(d[1], 1)
+    # Ramps
+    n00 = np.sum(np.dstack((grid[:, :, 0], grid[:, :, 1])) * g00, 2)
+    n10 = np.sum(np.dstack((grid[:, :, 0] - 1, grid[:, :, 1])) * g10, 2)
+    n01 = np.sum(np.dstack((grid[:, :, 0], grid[:, :, 1] - 1)) * g01, 2)
+    n11 = np.sum(np.dstack((grid[:, :, 0] - 1, grid[:, :, 1] - 1)) * g11, 2)
+    # Interpolation
+    t = _fade(grid)
+    n0 = n00 * (1 - t[:, :, 0]) + t[:, :, 0] * n10
+    n1 = n01 * (1 - t[:, :, 0]) + t[:, :, 0] * n11
+    return np.sqrt(2) * ((1 - t[:, :, 1]) * n0 + t[:, :, 1] * n1)
+
+
+def _generate_fractal_noise_2d(shape, res, octaves=1, persistence=0.5):
+    noise = np.zeros(shape)
+    frequency = 1
+    amplitude = 1
+    for _ in range(octaves):
+        noise += amplitude * _generate_perlin_noise_2d(shape, (frequency*res[0], frequency*res[1]))
+        frequency *= 2
+        amplitude *= persistence
+    return noise
+
+
 class Game:
-    def __init__(self, players, halite_stores, width, height, cells, ships, constructs, shipyard_pos):
+    def __init__(self, players, bank, width, height, cells, ships, constructs, shipyard_pos, turn, max_turns):
         self.players = players
-        self.halite_stores = halite_stores  # {player id: player halite stores}
+        self.bank = bank  # player id: player halite bank
         self.width = width
         self.height = height
-        self.cells = cells
+        self.cells = cells  # cells[y][x] = [cell halite, construction id, ship id, ship halite] at that position
         self.ships = ships
         self.constructs = constructs  # {construct id: construct}
         self.shipyard_pos = shipyard_pos  # {player id: player's shipyard position tuple}
         self._next_id = len(players)
-
-    def __getitem__(self, x, y):
-        return self.cells[y][x]
+        self.turn = turn
+        self.max_turns = max_turns
 
     @staticmethod
-    def generate_map(players, width, height):
-        """Initializes a game"""
+    def initialize_game(players, width, height, map_gen='perlin'):
+        """Initializes a game object with a map generated based on the selected mode."""
         if not (width % 4 == height % 2 == 0):
             raise ValueError(f'Invalid Map Dimensions (width={width}, height={height})')
         if not (len(players) == 2 or (len(players) == 4 and height % 4 == 0)):
@@ -39,12 +76,55 @@ class Game:
         for id_, player in enumerate(players):
             player.id = id_
 
-        halite_stores = {player.id: 5000 for player in players}
+        bank = {player.id: 5000 for player in players}
 
         if len(players) == 2:
-            left_half = np.random.randint(10, 1000, size=(height, width // 2))
+            if map_gen == 'perlin':
+                perlin = np.square(_generate_perlin_noise_2d((height, width // 2), (4, 2)))
+                # max_octaves = 0
+                # w = width // 4
+                # while w % 2 == 0:
+                #     w //= 2
+                #     max_octaves += 1
+                # perlin = np.square(_generate_fractal_noise_2d((height, width // 2), (4, 2), max_octaves, 0.7))
+                noise = np.clip(np.random.normal(1, 0.5, size=(height, width // 2)), 0.5, 10)
+                max_halite = np.amax(perlin * noise)
+                actual_max = random.randint(800, 1000)
+                left_half = np.clip(perlin * noise * (actual_max / max_halite), 0, 1000).astype(int)
+                # left_half = (_generate_fractal_noise_2d((height, width // 2), (2, 1), 4, 0.8) * 375 + 450).astype(int)
+            elif map_gen == 'sparse':
+                left_half = np.clip(np.random.normal(10, 50, size=(height, width // 2)), 0, 1000)
+            elif map_gen == 'dense':
+                left_half = np.clip(np.random.normal(800, 100, size=(height, width // 2)), 0, 1000)
+            elif map_gen == 'pockets':
+                left_half = np.random.normal(10, 50, size=(height, width // 2))
+                for _ in range(random.randint(1, 4)):
+                    pocket_x = random.randint(0, width // 2 - 1)
+                    pocket_y = random.randint(0, height - 1)
+                    left_half[pocket_y][pocket_x] += random.randint(500, 1000)
+                left_half = np.clip(left_half, 0, 1000)
+            else:
+                left_half = np.random.randint(10, 1000, size=(height, width // 2))
         else:
-            upper_left = np.random.randint(10, 1000, size=(height // 2, width // 2))
+            if map_gen == 'perlin':
+                perlin = np.square(_generate_perlin_noise_2d((height // 2, width // 2), (2, 2)))
+                noise = np.clip(np.random.normal(1, 0.5, size=(height // 2, width // 2)), 0.5, 10)
+                max_halite = np.amax(perlin * noise)
+                actual_max = random.randint(800, 1000)
+                upper_left = np.clip(perlin * noise * (actual_max / max_halite), 0, 1000).astype(int)
+            elif map_gen == 'sparse':
+                upper_left = np.clip(np.random.normal(10, 50, size=(height // 2, width // 2)), 0, 1000)
+            elif map_gen == 'dense':
+                upper_left = np.clip(np.random.normal(800, 100, size=(height // 2, width // 2)), 0, 1000)
+            elif map_gen == 'pockets':
+                upper_left = np.random.normal(10, 50, size=(height // 2, width // 2))
+                for _ in range(random.randint(1, 4)):
+                    pocket_x = random.randint(0, width // 2 - 1)
+                    pocket_y = random.randint(0, height // 2 - 1)
+                    upper_left[pocket_y][pocket_x] += random.randint(500, 1000)
+                upper_left = np.clip(upper_left, 0, 1000)
+            else:
+                upper_left = np.random.randint(10, 1000, size=(height // 2, width // 2))
             left_half = np.concatenate((upper_left, np.flip(upper_left, 0)), 0)
         halite_counts = np.concatenate((left_half, np.flip(left_half, 1)), 1)
 
@@ -54,18 +134,18 @@ class Game:
         shipyard_pos = {}
         if len(players) == 2:
             constructs[0] = Shipyard(players[0].id, 0, width / 4, height / 2)
-            shipyard_pos[players[0].id] = (width / 4, height / 2)
-            constructs[1] = Shipyard(players[1].id, 1, width * 3 / 4, height / 2)
-            shipyard_pos[players[1].id] = (width * 3 / 4, height / 2)
+            shipyard_pos[players[0].id] = Position(width / 4, height / 2)
+            constructs[1] = Shipyard(players[1].id, 1, width * 3 / 4 - 1, height / 2)
+            shipyard_pos[players[1].id] = Position(width * 3 / 4 - 1, height / 2)
         else:
             constructs[0] = Shipyard(players[0].id, 0, width / 4, height / 4)
-            shipyard_pos[players[0].id] = (width / 4, height / 4)
-            constructs[1] = Shipyard(players[1].id, 1, width * 3 / 4, height / 4)
-            shipyard_pos[players[1].id] = (width * 3 / 4, height / 4)
-            constructs[2] = Shipyard(players[2].id, 2, width / 4, height * 3 / 4)
-            shipyard_pos[players[2].id] = (width / 4, height * 3 / 4)
-            constructs[3] = Shipyard(players[3].id, 3, width * 3 / 4, height * 3 / 4)
-            shipyard_pos[players[3].id] = (width * 3 / 4, height * 3 / 4)
+            shipyard_pos[players[0].id] = Position(width / 4, height / 4)
+            constructs[1] = Shipyard(players[1].id, 1, width * 3 / 4 - 1, height / 4)
+            shipyard_pos[players[1].id] = Position(width * 3 / 4 - 1, height / 4)
+            constructs[2] = Shipyard(players[2].id, 2, width / 4, height * 3 / 4 - 1)
+            shipyard_pos[players[2].id] = Position(width / 4, height * 3 / 4 - 1)
+            constructs[3] = Shipyard(players[3].id, 3, width * 3 / 4 - 1, height * 3 / 4 - 1)
+            shipyard_pos[players[3].id] = Position(width * 3 / 4 - 1, height * 3 / 4 - 1)
 
         cells = np.zeros((height, width, 4), int)
         for y in range(height):
@@ -75,10 +155,12 @@ class Game:
             cells[shipyard.y][shipyard.x][0] = 0
             cells[shipyard.y][shipyard.x][1] = shipyard.id
 
-        return Game(players, halite_stores, width, height, cells, ships, constructs, shipyard_pos)
+        max_turns = round(max(width, height) * 3.125) + 300
+
+        return Game(players, bank, width, height, cells, ships, constructs, shipyard_pos, 0, max_turns)
 
     @staticmethod
-    def create_game(players, map_width=None, map_height=None, return_replay=False):
+    def run_game(players, map_width=None, map_height=None, return_replay=False, map_gen='perlin', make_data=False):
         if not (len(players) == 2 or len(players) == 4):
             raise ValueError(f'Invalid number of players: {len(players)}')
 
@@ -91,8 +173,7 @@ class Game:
         elif not ((len(players) == 2 and map_height % 2 == 0) or (len(players) == 4 and map_height % 4 == 0)):
             raise ValueError(f'Invalid Map Dimensions (width={map_width}, height={map_height})')
 
-        game = Game.generate_map(players, map_width, map_height)
-        print(game.constructs.values())
+        game = Game.initialize_game(players, map_width, map_height, map_gen=map_gen)
 
         # Send players initial data
         for player in players:
@@ -100,15 +181,19 @@ class Game:
 
         num_turns = round(max(map_width, map_height) * 3.125) + 300
         if return_replay:
-            cell_data = np.empty((num_turns, map_height, map_width, 4), int)
+            cell_data = np.zeros((num_turns, map_height, map_width, 4), dtype=int)
             bank_data = []
             owner_data = {}
+            for construct in game.constructs.values():
+                owner_data[construct.id] = construct.owner_id
+            collisions = np.zeros((num_turns, map_height, map_width), dtype=bool)
         else:
             cell_data = None
             bank_data = None
             owner_data = None
+            collisions = None
 
-        for turn_num in range(num_turns):
+        while game.turn < game.max_turns:
             # Get commands from players
             commands = []
             moved = defaultdict(bool)
@@ -117,7 +202,7 @@ class Game:
                 for command in new_commands:
                     if command.owner_id != player.id:
                         raise ValueError(f'Cannot issue commands for enemy units: {command}')
-                commands.extend(player.step(game))
+                commands.extend(new_commands)
 
             # Processes commands.
             for command in commands:
@@ -133,28 +218,36 @@ class Game:
                     moved[ship.id] = True
 
                 elif isinstance(command, SpawnShipCommand):
-                    if game.halite_stores[command.owner_id] < 1000:
+                    if game.bank[command.owner_id] < 1000:
                         raise ValueError(f'Not enough halite for {command}')
-                    game.halite_stores[command.owner_id] -= 1000
-                    new_ship = Ship(command.owner_id, game._next_id, game.shipyard_pos[command.owner_id][0],
-                                    game.shipyard_pos[command.owner_id][1], 0, False)
+                    game.bank[command.owner_id] -= 1000
+                    new_ship = Ship(owner_id=command.owner_id,
+                                    id_=game._next_id,
+                                    x=game.shipyard_pos[command.owner_id].x,
+                                    y=game.shipyard_pos[command.owner_id].y,
+                                    halite=0,
+                                    inspired=False)
                     game.ships[new_ship.id] = new_ship
-                    owner_data[new_ship.id] = new_ship.owner_id
+                    if return_replay:
+                        owner_data[new_ship.id] = new_ship.owner_id
                     game._next_id += 1
 
                 elif isinstance(command, ConstructDropoffCommand):
                     if command.target_id not in game.ships:
                         raise ValueError(f'Invalid target for {command}')
-                    if game.halite_stores[command.owner_id] < 4000:
+                    ship = game.ships[command.target_id]
+                    cost = 4000 - ship.halite - game.cells[ship.y][ship.x][0]
+                    if game.bank[command.owner_id] < cost:
                         raise ValueError(f'Not enough halite for {command}')
-                    new_dropoff = Dropoff(command.owner_id, game._next_id, game.ships[command.target_id].x,
-                                          game.ships[command.target_id].y)
-                    if game.cells[game.ships[command.target_id].y][game.ships[command.target_id].x][1] != -1:
+                    new_dropoff = Dropoff(command.owner_id, game._next_id, ship.x, ship.y)
+                    if game.cells[ship.y][ship.x][1] != -1:
                         raise ValueError(f'Invalid location for {command}')
+                    game.bank[command.owner_id] -= cost
                     game.constructs[new_dropoff.id] = new_dropoff
-                    owner_data[new_dropoff.id] = new_dropoff.owner_id
                     game.cells[new_dropoff.y][new_dropoff.x][1] = new_dropoff.id
-                    game.halite_stores[command.owner_id] -= 4000 - game.ships[command.target_id].halite
+                    game.cells[new_dropoff.y][new_dropoff.x][0] = 0
+                    if return_replay:
+                        owner_data[new_dropoff.id] = new_dropoff.owner_id
                     del game.ships[command.target_id]
                     game._next_id += 1
 
@@ -169,10 +262,12 @@ class Game:
             for ship in game.ships.values():
                 if ship_counts[ship.y][ship.x] > 1:
                     if game.cells[ship.y][ship.x][1] != -1:
-                        game.halite_stores[game.constructs[game.cells[ship.y][ship.x][1]].owner_id] += ship.halite
+                        game.bank[game.constructs[game.cells[ship.y][ship.x][1]].owner_id] += ship.halite
                     else:
                         game.cells[ship.y][ship.x][0] += ship.halite
                     delete.append(ship.id)
+                    if return_replay:
+                        collisions[game.turn][ship.y][ship.x] = True
                     # print(f'Turn {turn_num}: {ship} had a collision at ({ship.x}, {ship.y})')
             for ship_id in delete:
                 del game.ships[ship_id]
@@ -181,21 +276,17 @@ class Game:
             for ship in game.ships.values():
                 game.cells[ship.y][ship.x][2] = ship.id
 
-            # Handles mining, inspiration and dropping of halite
+            # Handles mining and dropping of halite
             for ship in game.ships.values():
                 ship_cell = game.cells[ship.y][ship.x]
 
                 # Mining
                 if not moved[ship.id]:
                     for dx in range(-4, 5):
-                        if not 0 <= ship.x + dx < map_width:
-                            continue
                         for dy in range(-4 + abs(dx), 5 - abs(dx)):
-                            if not 0 <= ship.y + dy < map_height:
-                                continue
                             # print(turn_num)
-                            if (game.cells[ship.y + dy][ship.x + dx][2] != -1
-                                    and game.ships[game.cells[ship.y + dy][ship.x + dx][2]].owner_id != ship.owner_id):
+                            ship_id = game.cells[(ship.y + dy) % map_height][(ship.x + dx) % map_width][2]
+                            if ship_id != -1 and game.ships[ship_id].owner_id != ship.owner_id:
                                 ship.inspired = True
                                 break
                         if ship.inspired:
@@ -213,18 +304,24 @@ class Game:
 
                 # Dropping off halite
                 elif ship_cell[1] != -1 and game.constructs[ship_cell[1]].owner_id == ship.owner_id:
-                    game.halite_stores[ship.owner_id] += ship.halite
+                    game.bank[ship.owner_id] += ship.halite
                     ship.halite = 0
 
             for ship in game.ships.values():
                 game.cells[ship.y][ship.x][3] = ship.halite
 
             if return_replay:
-                np.copyto(cell_data[turn_num], game.cells)
-                bank_data.append(game.halite_stores.copy())
+                np.copyto(cell_data[game.turn], game.cells)
+                bank_data.append(game.bank.copy())
+
+            print(f'Turn {game.turn + 1:03}/{game.max_turns} - Halite {" ".join(str(b) for b in game.bank.values())}')
+            game.turn += 1
 
         # if replay_file is not None:
         #     np.save(replay_file, cell_data)
 
         if return_replay:
-            return players, cell_data, bank_data, owner_data
+            return players, cell_data, bank_data, owner_data, collisions
+        else:
+            # returns the winner otherwise
+            return max((p.id for p in game.players), key=lambda pid: game.bank[pid])
