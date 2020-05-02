@@ -6,6 +6,9 @@ class Position:
     def __add__(self, other):
         return Position(self.x + other.x, self.y + other.y)
 
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+
     def __repr__(self):
         return f'{self.__class__.__name__}({self.x}, {self.y})'
 
@@ -41,7 +44,7 @@ class Ship(Entity):
         self.inspired = inspired
 
     def __repr__(self):
-        return f'{self.__class__.__name__}(id={self.id}, Position({self.x}, {self.y}), Halite={self.halite})'
+        return f'{self.__class__.__name__}(id={self.id}, owner_id={self.owner_id}, Position({self.x}, {self.y}), Halite={self.halite})'
 
 
 class Command:
