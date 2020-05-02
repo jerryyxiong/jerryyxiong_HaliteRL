@@ -12,10 +12,11 @@ STORAGE_MARGIN = 7
 COLORS = (255, 0, 0), (0, 255, 0), (6, 152, 253), (255, 125, 0)
 SHIPYARD_CR = 0.6  # CR: Color Ratio
 DROPOFF_CR = 0.8
+BOOM_COLOR = (255, 255, 0)
 
 
-def _halite_brightness(halite: int):
-    return min(int(sqrt(halite / 1024) * 255), 255)
+def _hue(halite_amt: int):
+    return min(int(sqrt(halite_amt / 1024) * 255), 255)
 
 
 def _ship_vertices(x, y, direction, storage=False):
@@ -25,22 +26,22 @@ def _ship_vertices(x, y, direction, storage=False):
                 CELL_SIZE * x + margin, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * y + margin)
-    elif direction == (1, 0):
+    elif direction == (-1, 0):
         return (CELL_SIZE * (x + 1) - margin, CELL_SIZE * y + CELL_SIZE // 2,
                 CELL_SIZE * x + margin, CELL_SIZE * y + margin,
                 CELL_SIZE * x + margin, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * x + margin, CELL_SIZE * (y + 1) - margin)
-    elif direction == (0, 1):
+    elif direction == (0, -1):
         return (CELL_SIZE * x + CELL_SIZE // 2, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * x + margin, CELL_SIZE * y + margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * y + margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * y + margin)
-    elif direction == (-1, 0):
+    elif direction == (1, 0):
         return (CELL_SIZE * x + margin, CELL_SIZE * y + CELL_SIZE // 2,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * y + margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * (y + 1) - margin)
-    elif direction == (0, -1):
+    elif direction == (0, 1):
         return (CELL_SIZE * x + CELL_SIZE // 2, CELL_SIZE * y + margin,
                 CELL_SIZE * x + margin, CELL_SIZE * (y + 1) - margin,
                 CELL_SIZE * (x + 1) - margin, CELL_SIZE * (y + 1) - margin,
@@ -50,7 +51,7 @@ def _ship_vertices(x, y, direction, storage=False):
 
 
 class Replayer(pyglet.window.Window):
-    def __init__(self, width, height, players, cell_data, bank_data, owner_data):
+    def __init__(self, width, height, players, cell_data, bank_data, owner_data, collisions):
         display = pyglet.canvas.get_display()
         screen = display.get_default_screen()
         template = Config(sample_buffers=1, samples=4)
@@ -65,6 +66,7 @@ class Replayer(pyglet.window.Window):
         self.cell_data = cell_data
         self.bank_data = bank_data
         self.owner_data = owner_data
+        self.collisions = collisions
 
         self.alive = 1
         self.keys = defaultdict(bool)
@@ -170,6 +172,7 @@ class Replayer(pyglet.window.Window):
 
     def on_mouse_press(self, x, y, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
+            self.current_rendered = None
             self.selected_cell = x // CELL_SIZE, y // CELL_SIZE
             if self.selected_cell[0] >= len(self.cell_data[0][0]):
                 self.selected_cell = None
@@ -177,9 +180,11 @@ class Replayer(pyglet.window.Window):
 
     def on_mouse_drag(self, x, y, dx, dy, button, modifiers):
         if button == pyglet.window.mouse.LEFT:
+            self.current_rendered = None
             self.selected_cell = x // CELL_SIZE, y // CELL_SIZE
             if self.selected_cell[0] >= len(self.cell_data[0][0]):
                 self.selected_cell = None
+
                 return
 
     def update(self, dt):
@@ -193,10 +198,19 @@ class Replayer(pyglet.window.Window):
         self.current_rendered = self.current_turn
 
         cells = self.cell_data[self.current_turn]
+        boom = self.collisions[self.current_turn]
         if self.current_turn > 0:
             prev_cells = self.cell_data[self.current_turn - 1]
+            prev_boom = self.collisions[self.current_turn - 1]
         else:
             prev_cells = cells
+            prev_boom = boom
+        if self.current_turn + 1 < len(self.cell_data):
+            next_cells = self.cell_data[self.current_turn + 1]
+            next_boom = self.collisions[self.current_turn + 1]
+        else:
+            next_cells = cells
+            next_boom = boom
 
         ship_count = defaultdict(int)
         held_halite = defaultdict(int)
@@ -206,40 +220,40 @@ class Replayer(pyglet.window.Window):
         # Draws the grid.
         for y in range(len(cells)):
             for x in range(len(cells[0])):
-                if cells[y][x][1] != prev_cells[y][x][1]:  # Means that cell was turned into a dropoff
+                if boom[y][x]:
+                    self.cell_quads[y][x].colors = BOOM_COLOR * 4
+                elif cells[y][x][1] != prev_cells[y][x][1] or (cells[y][x][1] != -1 and (prev_boom[y][x] or next_boom[y][x])):  # Means that cell was turned into a dropoff
                     self.cell_quads[y][x].colors = tuple(
                         int(DROPOFF_CR * a) for a in COLORS[self.owner_data[cells[y][x][1]]]) * 4
-                elif cells[y][x][0] != prev_cells[y][x][0]:
-                    self.cell_quads[y][x].colors = (_halite_brightness(cells[y][x][0]),) * 12
+                # draws halite, maybe because going back from creating a dropoff next turn or just boomed
+                elif cells[y][x][0] != prev_cells[y][x][0] or cells[y][x][1] != next_cells[y][x][1] or prev_boom[y][x] or next_boom[y][x]:
+                    self.cell_quads[y][x].colors = (_hue(cells[y][x][0]),) * 12
                 if cells[y][x][2] != -1:  # If there is a ship
                     living_ships.add(cells[y][x][2])
                     ship_count[self.owner_data[cells[y][x][2]]] += 1
                     held_halite[self.owner_data[cells[y][x][2]]] += cells[y][x][3]
-                    if self.current_turn + 1 < len(self.cell_data):
-                        next_cells = self.cell_data[self.current_turn + 1]
-                    else:
-                        next_cells = cells
+
                     if cells[y][x][2] in self.ship_vertices:  # If this ship was drawn before
-                        for delta in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)):
-                            if cells[y][x][2] == \
-                                    next_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
-                                new_ship_vertices = _ship_vertices(x, y, delta)
-                                new_storage_vertices = _ship_vertices(x, y, delta, storage=True)
-                                if self.ship_vertices[cells[y][x][2]].get_size() != len(new_ship_vertices) // 2:
-                                    self.ship_vertices[cells[y][x][2]].resize(len(new_ship_vertices) // 2)
-                                    self.storage_vertices[cells[y][x][2]].resize(len(new_ship_vertices) // 2)
-                                self.ship_vertices[cells[y][x][2]].vertices = new_ship_vertices
-                                self.storage_vertices[cells[y][x][2]].vertices = new_storage_vertices
-                                self.storage_vertices[cells[y][x][2]].colors = tuple(
-                                    round(COLORS[self.owner_data[cells[y][x][2]]][i % 3] / 255 * _halite_brightness(
-                                        cells[y][x][3]))
-                                    for i in range(3 * len(new_ship_vertices) // 2)
-                                )
+                        d = (0, 0)
+                        for delta in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+                            if cells[y][x][2] == prev_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
+                                d = delta
                                 break
+
+                        new_ship_vertices = _ship_vertices(x, y, d)
+                        new_storage_vertices = _ship_vertices(x, y, d, storage=True)
+                        # if self.ship_vertices[cells[y][x][2]].get_size() != len(new_ship_vertices) // 2:
+                        #     self.ship_vertices[cells[y][x][2]].resize(len(new_ship_vertices) // 2)
+                        #     self.storage_vertices[cells[y][x][2]].resize(len(new_ship_vertices) // 2)
+                        self.ship_vertices[cells[y][x][2]].vertices = new_ship_vertices
+                        self.storage_vertices[cells[y][x][2]].vertices = new_storage_vertices
+                        self.storage_vertices[cells[y][x][2]].colors = tuple(
+                            round(COLORS[self.owner_data[cells[y][x][2]]][i % 3] / 255 * _hue(cells[y][x][3]))
+                            for i in range(3 * len(new_ship_vertices) // 2)
+                        )
                     else:
                         for delta in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)):
-                            if cells[y][x][2] == \
-                                    next_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
+                            if cells[y][x][2] == prev_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
                                 new_ship_vertices = _ship_vertices(x, y, delta)
                                 new_storage_vertices = _ship_vertices(x, y, delta, storage=True)
                                 self.ship_vertices[cells[y][x][2]] = self.batch.add(
@@ -292,10 +306,9 @@ class Replayer(pyglet.window.Window):
         self.flip()
 
     @staticmethod
-    def from_data(players, cell_data, stat_data, owner_data):
+    def from_data(players, cell_data, stat_data, owner_data, collisions):
         return Replayer(CELL_SIZE * len(cell_data[0][0]) + 300, CELL_SIZE * len(cell_data[0]), players, cell_data,
-                        stat_data,
-                        owner_data)
+                        stat_data, owner_data, collisions)
 
     def run(self):
         pyglet.clock.schedule_interval(self.update, 1 / 60)
@@ -303,4 +316,4 @@ class Replayer(pyglet.window.Window):
             self.render()
             self.dispatch_events()
             pyglet.clock.tick()
-            print(pyglet.clock.get_fps())
+            # print(pyglet.clock.get_fps())
