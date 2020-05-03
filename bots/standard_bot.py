@@ -152,18 +152,55 @@ class StandardBot(Player):
             ydd = (ship.y - t.y) % game.height
             ydu = (t.y - ship.y) % game.height
 
-            if xdl <= xdr != 0:
-                next_pos[ship.id] = Position((ship.x - 1) % game.width, ship.y)
-                commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
-            elif xdr < xdl:
-                next_pos[ship.id] = Position((ship.x + 1) % game.width, ship.y)
-                commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
-            elif ydd <= ydu != 0:
-                next_pos[ship.id] = Position(ship.x, (ship.y - 1) % game.height)
-                commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
-            elif ydu < ydd:
-                next_pos[ship.id] = Position(ship.x, (ship.y + 1) % game.height)
-                commands[ship.id] = MoveCommand(self.id, ship.id, 'N')
+            if xdl == xdr == 0:
+                x_dir = 0
+            elif xdl <= xdr:
+                x_dir = -1
+            else:
+                x_dir = 1
+
+            if ydd == ydu == 0:
+                y_dir = 0
+            elif ydd <= ydu:
+                y_dir = -1
+            else:
+                y_dir = 1
+
+            if x_dir != 0 and y_dir != 0:
+                x_pen = game.cells[ship.y][(ship.x + x_dir) % game.width][0]
+                y_pen = game.cells[(ship.y + y_dir) % game.height][ship.x][0]
+                if len(next_ships[ship.y][(ship.x + x_dir) % game.width]) > 0:
+                    x_pen += 3000
+                elif game.cells[ship.y][(ship.x + x_dir) % game.width][2] != -1:
+                    x_pen += 300
+                if len(next_ships[ship.y + y_dir][ship.x]) > 0:
+                    y_pen += 3000
+                elif game.cells[(ship.y + y_dir) % game.height][ship.x][2] != -1:
+                    y_pen += 300
+                if x_pen < y_pen:
+                    next_pos[ship.id] = Position((ship.x + x_dir) % game.width, ship.y)
+                    if x_dir == -1:
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
+                    else:
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
+                else:
+                    next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.height)
+                    if y_dir == -1:
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
+                    else:
+                        commands[ship.id] = MoveCommand(self.id, ship.id, 'N')
+            elif x_dir != 0:
+                next_pos[ship.id] = Position((ship.x + x_dir) % game.width, ship.y)
+                if x_dir == -1:
+                    commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
+                else:
+                    commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
+            elif y_dir != 0:
+                next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.height)
+                if y_dir == -1:
+                    commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
+                else:
+                    commands[ship.id] = MoveCommand(self.id, ship.id, 'N')
             else:
                 next_pos[ship.id] = Position(ship.x, ship.y)
             next_ships[next_pos[ship.id].y][next_pos[ship.id].x].append(ship)
