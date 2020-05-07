@@ -6,11 +6,17 @@ from entity import Position, Ship, Shipyard, Dropoff, MoveCommand, SpawnShipComm
 
 
 class Player:
+    def __init__(self, id_):
+        self.id = id_
+
     def start(self, id_, map_width, map_height, cells):
         pass
 
     def step(self, game):
         pass
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}(id={self.id})'
 
 
 def _fade(t):
@@ -51,6 +57,28 @@ def _generate_fractal_noise_2d(shape, res, octaves=1, persistence=0.5):
     return noise
 
 
+def roll_to_zero(cells, pos: Position):
+    return np.roll(cells, (-pos.y, -pos.x), (0, 1))
+
+
+def pad_frame(cells, shipyard_pos: Position):
+    rolled = roll_to_zero(cells, shipyard_pos)
+    tiled = np.tile(rolled, (math.ceil(128 / rolled.shape[0]), math.ceil(128 / rolled.shape[1]), 1))
+    return np.roll(tiled, (64, 64), (0, 1))[:128, :128]
+
+
+def center(pos, cent, w, h):
+    if (pos.x - cent.x) % w < (cent.x - pos.x) % w:
+        x_adj = 64 + (pos.x - cent.x) % w
+    else:
+        x_adj = 64 - (cent.x - pos.x) % w
+    if (pos.y - cent.y) % h < (cent.y - pos.y) % h:
+        y_adj = 64 + (pos.y - cent.y) % h
+    else:
+        y_adj = 64 - (cent.y - pos.y) % h
+    return Position(x_adj, y_adj)
+
+
 class Game:
     def __init__(self, players, bank, width, height, cells, ships, constructs, shipyard_pos, turn, max_turns):
         self.players = players
@@ -64,6 +92,10 @@ class Game:
         self._next_id = len(players)
         self.turn = turn
         self.max_turns = max_turns
+
+    def __repr__(self):
+        return (f'Game(players={self.players}, width={self.width}, '
+                f'height={self.height}, max_turns={self.max_turns})')
 
     @staticmethod
     def initialize_game(players, width, height, map_gen='perlin'):
@@ -160,7 +192,8 @@ class Game:
         return Game(players, bank, width, height, cells, ships, constructs, shipyard_pos, 0, max_turns)
 
     @staticmethod
-    def run_game(players, map_width=None, map_height=None, return_replay=False, map_gen='perlin', make_data=False):
+    def run_game(players, map_width: int = None, map_height: int = None, return_replay=False,
+                 map_gen='perlin', save_name=None, verbosity=1):
         if not (len(players) == 2 or len(players) == 4):
             raise ValueError(f'Invalid number of players: {len(players)}')
 
@@ -174,6 +207,9 @@ class Game:
             raise ValueError(f'Invalid Map Dimensions (width={map_width}, height={map_height})')
 
         game = Game.initialize_game(players, map_width, map_height, map_gen=map_gen)
+
+        if verbosity == 1 or verbosity == 2:
+            print(f'Now Running: {game}')
 
         # Send players initial data
         for player in players:
@@ -197,11 +233,25 @@ class Game:
             # Get commands from players
             commands = []
             moved = defaultdict(bool)
+            frames = []
+            moves = []
+            spawns = []
             for player in players:
                 new_commands = player.step(game)
                 for command in new_commands:
                     if command.owner_id != player.id:
                         raise ValueError(f'Cannot issue commands for enemy units: {command}')
+                if save_name is not None:
+                    new_frame = game.cells.copy()
+                    no_ship = new_frame[:, :, 2] == -1
+                    for ship in game.ships.values():
+                        new_frame[:, :, 2][new_frame[:, :, 2] == ship.id] = (1 if ship.owner_id == player.id else -1)
+                    new_frame[:, :, 2][no_ship] = 0
+                    new_frame = pad_frame(new_frame, game.shipyard_pos[player.id])
+                    frames.append(new_frame)
+
+                    moves.append(np.zeros((128, 128)))
+                    spawns.append(0)
                 commands.extend(new_commands)
 
             # Processes commands.
@@ -212,6 +262,9 @@ class Game:
                     ship = game.ships[command.target_id]
                     if ship.halite < game.cells[ship.y][ship.x][0] // 10 or command.direction == "O":
                         continue
+                    if save_name is not None:
+                        c = center(ship, game.shipyard_pos[command.owner_id], game.width, game.height)
+                        moves[command.owner_id][c.y][c.x] = int(command)
                     ship.halite -= game.cells[ship.y][ship.x][0] // 10
                     ship.x = (ship.x + command.direction_vector.x) % map_width
                     ship.y = (ship.y + command.direction_vector.y) % map_height
@@ -228,6 +281,8 @@ class Game:
                                     halite=0,
                                     inspired=False)
                     game.ships[new_ship.id] = new_ship
+                    if save_name is not None:
+                        spawns[command.owner_id] = 1
                     if return_replay:
                         owner_data[new_ship.id] = new_ship.owner_id
                     game._next_id += 1
@@ -246,6 +301,9 @@ class Game:
                     game.constructs[new_dropoff.id] = new_dropoff
                     game.cells[new_dropoff.y][new_dropoff.x][1] = new_dropoff.id
                     game.cells[new_dropoff.y][new_dropoff.x][0] = 0
+                    if save_name is not None:
+                        c = center(ship, game.shipyard_pos[command.owner_id], game.width, game.height)
+                        moves[command.owner_id][c.y][c.x] = 5
                     if return_replay:
                         owner_data[new_dropoff.id] = new_dropoff.owner_id
                     del game.ships[command.target_id]
@@ -275,24 +333,25 @@ class Game:
             game.cells[:, :, 2:4] = -1
             for ship in game.ships.values():
                 game.cells[ship.y][ship.x][2] = ship.id
+                ship.inspired = False
 
-            # Handles mining and dropping of halite
+            # Handles mining, inspiration, and and dropping of halite
             for ship in game.ships.values():
                 ship_cell = game.cells[ship.y][ship.x]
 
                 # Mining
                 if not moved[ship.id]:
-                    for dx in range(-4, 5):
-                        for dy in range(-4 + abs(dx), 5 - abs(dx)):
-                            # print(turn_num)
-                            ship_id = game.cells[(ship.y + dy) % map_height][(ship.x + dx) % map_width][2]
-                            if ship_id != -1 and game.ships[ship_id].owner_id != ship.owner_id:
-                                ship.inspired = True
+                    # Inspiration
+                    if not ship.inspired:
+                        for dx in range(-4, 5):
+                            for dy in range(-4 + abs(dx), 5 - abs(dx)):
+                                ship_id = game.cells[(ship.y + dy) % map_height][(ship.x + dx) % map_width][2]
+                                if ship_id != -1 and game.ships[ship_id].owner_id != ship.owner_id:
+                                    ship.inspired = True
+                                    game.ships[ship_id].inspired = True
+                                    break
+                            if ship.inspired:
                                 break
-                        if ship.inspired:
-                            break
-                    else:
-                        ship.inspired = False
                     amt_mined = (math.ceil(ship_cell[0] / 4)
                                  if ship.halite + math.ceil(ship_cell[0] / 4) <= 1000
                                  else 1000 - ship.halite)
@@ -313,12 +372,24 @@ class Game:
             if return_replay:
                 np.copyto(cell_data[game.turn], game.cells)
                 bank_data.append(game.bank.copy())
+            if save_name is not None:
+                for player in players:
+                    np.savez(f'{save_name}_{game.turn:03}{chr(ord("a") + player.id)}',
+                             frames=frames[player.id],
+                             meta=(game.width,
+                                   game.max_turns - game.turn,
+                                   game.bank[player.id],
+                                   max(game.bank[p.id] for p in players if p is not player)),
+                             moves=moves[player.id],
+                             spawn=spawns[player.id])
 
-            print(f'Turn {game.turn + 1:03}/{game.max_turns} - Halite {" ".join(str(b) for b in game.bank.values())}')
+            if verbosity == 2:
+                print(f'Turn {game.turn + 1:03}/{game.max_turns} - Halite {" ".join(str(b) for b in game.bank.values())}')
             game.turn += 1
 
-        # if replay_file is not None:
-        #     np.save(replay_file, cell_data)
+        if verbosity == 1 or verbosity == 2:
+            print(f'Winner: {max((p for p in game.players), key=lambda p: game.bank[p.id])}, '
+                  f'Banks: { {p: game.bank[p.id] for p in players} }')
 
         if return_replay:
             return players, cell_data, bank_data, owner_data, collisions
