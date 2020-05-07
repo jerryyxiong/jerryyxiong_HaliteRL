@@ -1,3 +1,7 @@
+import time
+
+import numpy as np
+
 from collections import defaultdict
 from engine import Player, Game
 from entity import Position, MoveCommand, SpawnShipCommand
@@ -10,6 +14,7 @@ class FastBot(Player):
         self.shipyard = None
         self.halite = 0
         self.returning = defaultdict(bool)  # ship id: bool
+        self.map_starting_halite = None
 
     def start(self, id_, map_width, map_height, game):
         self.id = id_
@@ -17,6 +22,7 @@ class FastBot(Player):
             if shipyard.owner_id == self.id:
                 self.shipyard = shipyard
                 break
+        self.map_starting_halite = np.sum(game.cells[:, :, 0])
 
     def step(self, game):
         def dist(a, b):
@@ -113,13 +119,23 @@ class FastBot(Player):
             nx = next_pos[ship.id].x
             ny = next_pos[ship.id].y
             if len(next_ships[ny][nx]) > 1 and not (rem <= 50 and nx == self.shipyard.x and ny == self.shipyard.y):
-                current = next_pos[ship.id]
-                while current != Position(ship.x, ship.y):
-                    if game.cells[next_pos[ship.id].y][next_pos[ship.id].x][2] == -1 or game.ships[game.cells[next_pos[ship.id].y][next_pos[ship.id].x][2]].owner_id != self.id:
+                cur = Position(ship.x, ship.y)
+                done = False
+                visited = set()
+                while not done:
+                    cur = next_pos[game.cells[cur.y][cur.x][2]]
+                    # if hits empty or enemy, then not a cycle
+                    if game.cells[cur.y][cur.x][2] == -1 or game.ships[game.cells[cur.y][cur.x][2]].owner_id != self.id:
                         break
-                    if current == next_pos[game.cells[next_pos[ship.id].y][next_pos[ship.id].x][2]]:
+                    # if ship stops, then not a cycle
+                    if cur == next_pos[game.cells[cur.y][cur.x][2]]:
                         break
-                    current = next_pos[game.cells[next_pos[ship.id].y][next_pos[ship.id].x][2]]
+                    if cur == Position(ship.x, ship.y):
+                        done = True
+                        continue
+                    elif game.cells[cur.y][cur.x][2] in visited:
+                        break
+                    visited.add(game.cells[cur.y][cur.x][2])
                 else:
                     continue
                 next_ships[next_pos[ship.id].y][next_pos[ship.id].x].remove(ship)
@@ -130,18 +146,17 @@ class FastBot(Player):
                 next_ships[ship.y][ship.x].append(ship)
 
         ret = list(commands.values())
-        if len(next_ships[self.shipyard.y][self.shipyard.x]) == 0 and self.halite >= 1000 and rem > 100:
+        if (len(next_ships[self.shipyard.y][self.shipyard.x]) == 0 and self.halite >= 1000 and rem > 100
+                and np.sum(game.cells[:, :, 0]) * 3 > self.map_starting_halite):
             ret.append(SpawnShipCommand(self.id, None))
         return ret
 
 
 if __name__ == '__main__':
-    import time
-
-    start_time = time.time_ns()
+    # start_time = time.time_ns()
     bot1 = FastBot()
     bot2 = FastBot()
-    players, cell_data, bank_data, owner_data, collisions = Game.run_game([bot1, bot2], return_replay=True, map_gen='perlin')
+    players, cell_data, bank_data, owner_data, collisions = Game.run_game([bot1, bot2], return_replay=True)
     # Game.run_game([bot1, bot2])
 
     my_replay = Replayer.from_data(players, cell_data, bank_data, owner_data, collisions)
