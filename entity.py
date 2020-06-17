@@ -76,6 +76,18 @@ class MoveCommand(Command):
         else:
             raise ValueError(f'Invalid Direction: {self.direction}')
 
+    def __int__(self):
+        if self.direction == 'O':
+            return 0
+        if self.direction == 'N':
+            return 1
+        if self.direction == 'E':
+            return 2
+        if self.direction == 'S':
+            return 3
+        if self.direction == 'W':
+            return 4
+
     def __repr__(self):
         return f'{self.__class__.__name__}(owner_id={self.owner_id}, target_id={self.target_id}, direction={self.direction})'
 

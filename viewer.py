@@ -1,6 +1,7 @@
 from time import time_ns
 from math import sqrt
 from collections import defaultdict
+
 import pyglet
 from pyglet.gl import *
 
@@ -252,18 +253,21 @@ class Replayer(pyglet.window.Window):
                             for i in range(3 * len(new_ship_vertices) // 2)
                         )
                     else:
+                        d = (0, 0)
                         for delta in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)):
                             if cells[y][x][2] == prev_cells[(y + delta[1]) % len(cells)][(x + delta[0]) % len(cells[0])][2]:
-                                new_ship_vertices = _ship_vertices(x, y, delta)
-                                new_storage_vertices = _ship_vertices(x, y, delta, storage=True)
-                                self.ship_vertices[cells[y][x][2]] = self.batch.add(
-                                    4, GL_QUADS, self.foreground, ('v2i/stream', new_ship_vertices),
-                                    ('c3B/static', COLORS[self.owner_data[cells[y][x][2]]] * 4)
-                                )
-                                self.storage_vertices[cells[y][x][2]] = self.batch.add(
-                                    4, GL_QUADS, self.foreground, ('v2i/stream', new_storage_vertices),
-                                    ('c3B/stream', (0,) * 12)
-                                )
+                                d = delta
+                                break
+                        new_ship_vertices = _ship_vertices(x, y, d)
+                        new_storage_vertices = _ship_vertices(x, y, d, storage=True)
+                        self.ship_vertices[cells[y][x][2]] = self.batch.add(
+                            4, GL_QUADS, self.foreground, ('v2i/stream', new_ship_vertices),
+                            ('c3B/static', COLORS[self.owner_data[cells[y][x][2]]] * 4)
+                        )
+                        self.storage_vertices[cells[y][x][2]] = self.batch.add(
+                            4, GL_QUADS, self.foreground, ('v2i/stream', new_storage_vertices),
+                            ('c3B/stream', (0,) * 12)
+                        )
 
         delete = []
         for id_, vertices in self.ship_vertices.items():

@@ -1,4 +1,5 @@
 import time
+import random
 
 import numpy as np
 
@@ -9,12 +10,13 @@ from viewer import Replayer
 
 
 class FastBot(Player):
-    def __init__(self):
+    def __init__(self, eps=0.0):
         self.id = None
         self.shipyard = None
         self.halite = 0
         self.returning = defaultdict(bool)  # ship id: bool
         self.map_starting_halite = None
+        self.eps = eps
 
     def start(self, id_, map_width, map_height, game):
         self.id = id_
@@ -46,7 +48,9 @@ class FastBot(Player):
                 if ship.halite < game.cells[ship.y][ship.x][0] // 10:
                     next_pos[ship.id] = Position(ship.x, ship.y)
                 else:
-                    if self.returning[ship.id]:
+                    if random.random() < self.eps:
+                        t = Position(random.randint(0, game.width), random.randint(0, game.height))
+                    elif self.returning[ship.id]:
                         t = Position(self.shipyard.x, self.shipyard.y)
                     else:
                         t = Position(ship.x, ship.y)
@@ -151,14 +155,9 @@ class FastBot(Player):
             ret.append(SpawnShipCommand(self.id, None))
         return ret
 
+    def __repr__(self):
+        return f'FastBot(id={self.id}, eps={self.eps})'
+
 
 if __name__ == '__main__':
-    # start_time = time.time_ns()
-    bot1 = FastBot()
-    bot2 = FastBot()
-    players, cell_data, bank_data, owner_data, collisions = Game.run_game([bot1, bot2], return_replay=True)
-    # Game.run_game([bot1, bot2])
-
-    my_replay = Replayer.from_data(players, cell_data, bank_data, owner_data, collisions)
-    # print((time.time_ns() - start_time) / 10 ** 9)
-    my_replay.run()
+    Replayer.from_data(*Game.run_game([FastBot(), FastBot()], map_gen='dense', return_replay=True)).run()

@@ -78,11 +78,11 @@ def create_unet():
     lg = layers.Dense(128, activation='relu', kernel_initializer='he_normal')(lg)
     lg = layers.BatchNormalization()(lg)
 
-    spawn = layers.Dense(64, activation='relu', kernel_initializer='he_normal')(lg)
-    spawn = layers.BatchNormalization()(spawn)
-    spawn = layers.Dense(64, activation='relu', kernel_initializer='he_normal')(spawn)
-    spawn = layers.BatchNormalization()(spawn)
-    spawn = layers.Dense(1, activation='sigmoid', name='spawn_output')(spawn)  # build predictions
+    # spawn = layers.Dense(64, activation='relu', kernel_initializer='he_normal')(lg)
+    # spawn = layers.BatchNormalization()(spawn)
+    # spawn = layers.Dense(64, activation='relu', kernel_initializer='he_normal')(spawn)
+    # spawn = layers.BatchNormalization()(spawn)
+    # spawn = layers.Dense(1, activation='sigmoid', name='spawn_output')(spawn)  # build predictions
 
     u1 = layers.Reshape((1, 1, 128))(lg)
     u1 = layers.Conv2DTranspose(64, kernel_size=3, strides=2, padding='same', kernel_initializer='he_normal')(u1)
@@ -150,12 +150,19 @@ class Dataset(tf.keras.utils.Sequence):
         return math.ceil(len(self.file_names) / self.batch_size)
 
     def __getitem__(self, idx):
+        # print(f'GOT ITEM: {idx}')
         batch_files = self.file_names[idx * self.batch_size: (idx + 1) * self.batch_size]
         loaded = [np.load(file) for file in batch_files]
         # {'moves_output': data['moves'], 'spawn_output': data['spawn']}
         frames = np.array([data['frames'] for data in loaded])
-        frames[:, :, 0] = frames[:, :, 0] / 1000
-        return [frames, np.array([data['meta'] for data in loaded])], np.array([data['moves'] for data in loaded])
+        frames = np.divide(frames, (1000, 1, 1, 1000))  # cell halite, construct team, ship team, ship halite
+        meta = np.array([data['meta'] for data in loaded])
+        meta = np.divide(meta, (64, 500, 10000, 10000))  # map size, remaining turns, friendly bank, enemy bank
+
+        # print(frames[0])
+        # print(meta[0])
+
+        return [frames, meta], np.array([data['moves'] for data in loaded])
 
 
 if __name__ == '__main__':
@@ -178,6 +185,6 @@ if __name__ == '__main__':
     )
 
     my_model = create_unet()
-    my_model.load_weights(tf.train.latest_checkpoint('checkpoints/'))
-    my_model.fit(train_dataset, epochs=10, callbacks=[cp_callback, es_callback], validation_data=val_dataset)
+    # my_model.load_weights(tf.train.latest_checkpoint('checkpoints/'))
+    my_model.fit(train_dataset, epochs=10, callbacks=[cp_callback, es_callback], validation_data=val_dataset, verbose=2)
 

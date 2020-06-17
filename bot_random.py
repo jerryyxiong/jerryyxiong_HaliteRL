@@ -20,10 +20,10 @@ class RandomBot(Player):
     def step(self, game):
         commands = []
 
-        self.halite = game.halite_stores[self.id]
+        self.halite = game.bank[self.id]
         for ship in game.ships.values():
             if ship.owner_id == self.id:
-                new_move = MoveCommand(self.id, ship.id, random.choice(['N']))
+                new_move = MoveCommand(self.id, ship.id, random.choice(['N', 'S', 'E', 'W', 'O']))
                 commands.append(new_move)
         if game.cells[self.shipyard.y][self.shipyard.x][2] == -1 and self.halite >= 1000:
             commands.append(SpawnShipCommand(self.id, None))
