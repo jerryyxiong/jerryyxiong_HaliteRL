@@ -62,12 +62,18 @@ def roll_to_zero(cells, pos: Position):
 
 
 def pad_frame(cells, shipyard_pos: Position):
+    """
+    Returns the cells padded to 128 by 128 and rolled so that shipyard_pos ends up at (64, 64)
+    """
     rolled = roll_to_zero(cells, shipyard_pos)
     tiled = np.tile(rolled, (math.ceil(128 / rolled.shape[0]), math.ceil(128 / rolled.shape[1]), 1))
     return np.roll(tiled, (64, 64), (0, 1))[:128, :128]
 
 
 def center(pos, cent, w, h):
+    """
+    Given a position in-game, returns the corresponding position when padded to 128 by 128, around cent, the center.
+    """
     if (pos.x - cent.x) % w < (cent.x - pos.x) % w:
         x_adj = 64 + (pos.x - cent.x) % w
     else:
