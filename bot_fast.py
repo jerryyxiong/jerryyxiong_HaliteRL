@@ -18,7 +18,7 @@ class FastBot(Player):
         self.map_starting_halite = None
         self.eps = eps
 
-    def start(self, id_, map_width, map_height, game):
+    def start(self, id_, game):
         self.id = id_
         for shipyard in game.constructs.values():
             if shipyard.owner_id == self.id:
@@ -28,17 +28,17 @@ class FastBot(Player):
 
     def step(self, game):
         def dist(a, b):
-            return min(abs(a.x - b.x), game.width - abs(a.x - b.x)) + min(abs(a.y - b.y), game.height - abs(a.y - b.y))
+            return min(abs(a.x - b.x), game.size - abs(a.x - b.x)) + min(abs(a.y - b.y), game.size - abs(a.y - b.y))
         commands = {}
         next_pos = {}  # ship id: next position
         next_ships = []  # next_ships[y][x] = list of ships that will end want to move to y x
         rem = game.max_turns - game.turn
-        for y in range(game.height):
+        for y in range(game.size):
             next_ships.append([])
-            for x in range(game.width):
+            for x in range(game.size):
                 next_ships[y].append([])
 
-        self.halite = game.bank[self.id]
+        self.halite = game.banks[self.id]
         for ship in game.ships.values():
             if ship.owner_id == self.id:
                 if ship.halite > 800 or game.turn + dist(ship, self.shipyard) + 20 > game.max_turns:
@@ -49,20 +49,20 @@ class FastBot(Player):
                     next_pos[ship.id] = Position(ship.x, ship.y)
                 else:
                     if random.random() < self.eps:
-                        t = Position(random.randint(0, game.width), random.randint(0, game.height))
+                        t = Position(random.randint(0, game.size), random.randint(0, game.size))
                     elif self.returning[ship.id]:
                         t = Position(self.shipyard.x, self.shipyard.y)
                     else:
                         t = Position(ship.x, ship.y)
                         for dx in range(-2, 3):
                             for dy in range(-2, 3):
-                                p = Position((ship.x + dx) % game.width, (ship.y + dy) % game.height)
+                                p = Position((ship.x + dx) % game.size, (ship.y + dy) % game.size)
                                 if (game.cells[p.y][p.x][0]) / (dist(ship, p) + 1) > game.cells[t.y][t.x][0] / (dist(t, ship) + 1):
                                     t = p
-                    xdl = (ship.x - t.x) % game.width
-                    xdr = (t.x - ship.x) % game.width
-                    ydd = (ship.y - t.y) % game.height
-                    ydu = (t.y - ship.y) % game.height
+                    xdl = (ship.x - t.x) % game.size
+                    xdr = (t.x - ship.x) % game.size
+                    ydd = (ship.y - t.y) % game.size
+                    ydu = (t.y - ship.y) % game.size
 
                     if xdl == xdr == 0:
                         x_dir = 0
@@ -79,36 +79,36 @@ class FastBot(Player):
                         y_dir = 1
 
                     if x_dir != 0 and y_dir != 0:
-                        x_pen = game.cells[ship.y][(ship.x + x_dir) % game.width][0]
-                        y_pen = game.cells[(ship.y + y_dir) % game.height][ship.x][0]
-                        if len(next_ships[ship.y][(ship.x + x_dir) % game.width]) > 0:
+                        x_pen = game.cells[ship.y][(ship.x + x_dir) % game.size][0]
+                        y_pen = game.cells[(ship.y + y_dir) % game.size][ship.x][0]
+                        if len(next_ships[ship.y][(ship.x + x_dir) % game.size]) > 0:
                             x_pen += 3000
-                        elif game.cells[ship.y][(ship.x + x_dir) % game.width][2] != -1:
+                        elif game.cells[ship.y][(ship.x + x_dir) % game.size][2] != -1:
                             x_pen += 300
-                        if len(next_ships[(ship.y + y_dir) % game.height][ship.x]) > 0:
+                        if len(next_ships[(ship.y + y_dir) % game.size][ship.x]) > 0:
                             y_pen += 3000
-                        elif game.cells[(ship.y + y_dir) % game.height][ship.x][2] != -1:
+                        elif game.cells[(ship.y + y_dir) % game.size][ship.x][2] != -1:
                             y_pen += 300
                         if x_pen < y_pen:
-                            next_pos[ship.id] = Position((ship.x + x_dir) % game.width, ship.y)
+                            next_pos[ship.id] = Position((ship.x + x_dir) % game.size, ship.y)
                             if x_dir == -1:
                                 commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
                             else:
                                 commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
                         else:
-                            next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.height)
+                            next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.size)
                             if y_dir == -1:
                                 commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
                             else:
                                 commands[ship.id] = MoveCommand(self.id, ship.id, 'N')
                     elif x_dir != 0:
-                        next_pos[ship.id] = Position((ship.x + x_dir) % game.width, ship.y)
+                        next_pos[ship.id] = Position((ship.x + x_dir) % game.size, ship.y)
                         if x_dir == -1:
                             commands[ship.id] = MoveCommand(self.id, ship.id, 'W')
                         else:
                             commands[ship.id] = MoveCommand(self.id, ship.id, 'E')
                     elif y_dir != 0:
-                        next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.height)
+                        next_pos[ship.id] = Position(ship.x, (ship.y + y_dir) % game.size)
                         if y_dir == -1:
                             commands[ship.id] = MoveCommand(self.id, ship.id, 'S')
                         else:
@@ -160,4 +160,6 @@ class FastBot(Player):
 
 
 if __name__ == '__main__':
-    Replayer.from_data(*Game.run_game([FastBot(), FastBot()], map_gen='dense', return_replay=True)).run()
+    g = Game([FastBot(), FastBot()], size=32)
+    g.generate_start()
+    g.run(replay=True)
